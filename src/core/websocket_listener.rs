@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use tokio::{sync::RwLock, time::{sleep, Duration}};
 use tracing::{info, error};
+use crate::core::model::TickerData;
 
 /// WebSocket 抽象 trait，等价 Java WebSocketStatusListener
 #[async_trait]
@@ -23,6 +24,8 @@ pub trait WebSocketStatusListener: Send + Sync + 'static {
 
     /// 是否已连接
     fn is_connected(&self) -> bool;
+
+    fn get_ticker(&self, symbol: &str) -> Option<TickerData>;
 }
 
 /// WebSocketManager 管理多个 listener
