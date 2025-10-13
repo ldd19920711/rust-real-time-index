@@ -7,7 +7,8 @@ use tracing::{info, error};
 use serde_json::json;
 use tungstenite::Utf8Bytes;
 use async_trait::async_trait;
-use crate::core::websocket_listener::{WebSocketStatusListener};
+use crate::core::trade_repository::{Trade, TradeRepository};
+use crate::core::websocket_listener::WebSocketStatusListener;
 use crate::exchanges::bitget::model::{Exchange, TickerData};
 
 #[derive(Clone)]
@@ -16,15 +17,19 @@ pub struct BitgetWebSocketClient {
     pub ws_url: String,
     pub sub_symbol_set: Arc<RwLock<HashSet<String>>>,
     pub store: Arc<DashMap<String, TickerData>>,
+    connected: Arc<RwLock<bool>>,
+    trade_repo: Arc<TradeRepository>,
 }
 
 impl BitgetWebSocketClient {
-    pub fn new(exchange: Exchange) -> Self {
+    pub fn new(exchange: Exchange, trade_repo: Arc<TradeRepository>) -> Self {
         Self {
             exchange: Arc::new(exchange),
             ws_url: "wss://ws.bitget.com/v2/ws/public".to_string(),
             sub_symbol_set: Arc::new(RwLock::new(HashSet::new())),
             store: Arc::new(DashMap::new()),
+            connected: Arc::new(RwLock::new(false)),
+            trade_repo,
         }
     }
 
@@ -38,6 +43,11 @@ impl BitgetWebSocketClient {
         let (ws_stream, _) = connect_async(&self.ws_url).await?;
         let (mut write, mut read) = ws_stream.split();
 
+        {
+            let mut conn = self.connected.write().await;
+            *conn = true;
+        }
+
         // 构建订阅消息
         let subs = self.sub_symbol_set.read().await;
         if let Some(msg) = self.build_sub_msg(&subs) {
@@ -46,8 +56,9 @@ impl BitgetWebSocketClient {
 
         let store = self.store.clone();
         let exchange = self.exchange.clone();
+        let connected = self.connected.clone();
+        let trade_repo = self.trade_repo.clone();
 
-        // 异步接收消息
         tokio::spawn(async move {
             while let Some(msg) = read.next().await {
                 match msg {
@@ -65,14 +76,28 @@ impl BitgetWebSocketClient {
                                             ts: ts.to_string(),
                                         };
                                         store.insert(inst_id.to_string(), ticker);
+                                        // 保存到 TradeRepository
+                                        if let Ok(price) = last.parse::<f64>() {
+                                            let trade = Trade {
+                                                exchange: exchange.name.clone(),
+                                                symbol: inst_id.to_string(),
+                                                price,
+                                                timestamp: ts.parse().unwrap_or(0),
+                                            };
+                                            trade_repo.save_trade(trade);
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                    Ok(Message::Ping(_)) => {}
+                    Ok(Message::Ping(_)) => {
+                        // let _ = write.send(Message::Pong(vec![])).await;
+                    }
                     Err(e) => {
                         error!("{} websocket error: {:?}", exchange.name, e);
+                        let mut conn = connected.write().await;
+                        *conn = false;
                         break;
                     }
                     _ => {}
@@ -89,7 +114,11 @@ impl WebSocketStatusListener for BitgetWebSocketClient {
     fn exchange_name(&self) -> &str { &self.exchange.name }
 
     async fn connect(&self, symbols: Option<HashSet<String>>) {
-        let _ = self.connect_internal(symbols).await;
+        if let Err(e) = self.connect_internal(symbols).await {
+            error!("{} connect error: {:?}", self.exchange.name, e);
+            let mut conn = self.connected.write().await;
+            *conn = false;
+        }
     }
 
     fn build_sub_msg(&self, symbols: &HashSet<String>) -> Option<String> {
@@ -108,5 +137,9 @@ impl WebSocketStatusListener for BitgetWebSocketClient {
 
     async fn send_ping(&self, ping_msg: &str) {
         info!("{} send ping: {}", self.exchange.name, ping_msg);
+    }
+
+    fn is_connected(&self) -> bool {
+        futures::executor::block_on(async { *self.connected.read().await })
     }
 }
