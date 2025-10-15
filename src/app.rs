@@ -1,4 +1,4 @@
-use crate::core::model::Symbol;
+use crate::core::model::{IndexKlineData, Symbol};
 use crate::core::index::index_calculator::IndexCalculator;
 use crate::exchanges::ExchangeEnum;
 use crate::tasks::{index_calculator_task, market_printer, price_updater};
@@ -6,6 +6,7 @@ use crate::tasks::{index_calculator_task, market_printer, price_updater};
 use rust_decimal::Decimal;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use tokio::sync::mpsc::UnboundedSender;
 use crate::core::db::config_repository::ConfigRepository;
 use crate::core::exchange::exchange_factory::ExchangeFactory;
 use crate::core::exchange::exchange_manager::ExchangeManager;
@@ -81,7 +82,7 @@ impl App {
         })
     }
 
-    pub async fn run(self, index_configs: Vec<crate::core::model::IndexConfig>) {
+    pub async fn run(self, index_configs: Vec<crate::core::model::IndexConfig>, config_repo: Arc<ConfigRepository>, kline_tx: UnboundedSender<IndexKlineData>) {
         let manager = self.manager.clone();
         let calculators = self.calculators.clone();
         let task_symbols_map = self.task_symbols_map.clone();
@@ -92,10 +93,12 @@ impl App {
             calculators.clone(),
             task_symbols_map.clone(),
         ));
-
+        let config_repo_arc = config_repo.clone();
         tokio::spawn(index_calculator_task::run_index_calculator(
             calculators.clone(),
             index_configs.clone(),
+            config_repo_arc,
+            kline_tx,
         ));
 
         tokio::spawn(market_printer::run_market_printer(

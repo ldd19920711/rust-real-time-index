@@ -1,5 +1,5 @@
 use sqlx::{PgPool, Result};
-use crate::core::model::{IndexConfig, Symbol, Task};
+use crate::core::model::{IndexConfig, IndexData, IndexKlineData, Symbol, Task};
 
 pub struct ConfigRepository {
     pool: PgPool,
@@ -114,6 +114,70 @@ impl ConfigRepository {
         sqlx::query("DELETE FROM symbol WHERE symbol_name = $1 AND exchange_name = $2")
             .bind(symbol_name)
             .bind(exchange_name)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+}
+
+impl ConfigRepository{
+
+    pub async fn insert_index_data(
+        &self,
+        table_name: &str, // 动态表名
+        index_data: &IndexData,
+    ) -> Result<()> {
+        // 注意：表名直接拼接，需要保证安全性，防止 SQL 注入
+        let sql = format!(
+            r#"
+            INSERT INTO {} (id, symbol, last, formula, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (id) DO UPDATE
+              SET last = EXCLUDED.last,
+                  formula = EXCLUDED.formula,
+                  updated_at = EXCLUDED.updated_at
+            "#,
+            table_name
+        );
+
+        sqlx::query(&sql)
+            .bind(index_data.id)
+            .bind(&index_data.symbol)
+            .bind(&index_data.last)
+            .bind(&index_data.formula)
+            .bind(index_data.created_at)
+            .bind(index_data.updated_at)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+}
+
+impl ConfigRepository {
+    pub async fn insert_index_kline_data(&self,
+                        index_data: &IndexKlineData,) -> anyhow::Result<()> {
+        let sql = r#"
+            INSERT INTO index_kline_data (id, symbol, open, high, low, close, ts, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (id) DO UPDATE
+              SET open = EXCLUDED.open,
+                  high = EXCLUDED.high,
+                  low = EXCLUDED.low,
+                  close = EXCLUDED.close,
+                  updated_at = EXCLUDED.updated_at
+            "#;
+        sqlx::query(&sql)
+            .bind(&index_data.id)
+            .bind(&index_data.symbol)
+            .bind(&index_data.open)
+            .bind(&index_data.high)
+            .bind(&index_data.low)
+            .bind(&index_data.close)
+            .bind(index_data.ts)
+            .bind(index_data.created_at)
+            .bind(index_data.updated_at)
             .execute(&self.pool)
             .await?;
         Ok(())
