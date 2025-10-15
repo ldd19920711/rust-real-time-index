@@ -1,4 +1,5 @@
 use std::{collections::HashSet, sync::Arc};
+use std::collections::HashMap;
 use tokio::sync::RwLock;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -8,8 +9,8 @@ use serde_json::json;
 use tungstenite::Utf8Bytes;
 use async_trait::async_trait;
 use crate::core::model::{Exchange, TickerData};
-use crate::core::trade_repository::{Trade, TradeRepository};
-use crate::core::websocket_listener::WebSocketStatusListener;
+use crate::core::trade::trade_repository::{Trade, TradeRepository};
+use crate::core::ws::websocket_listener::WebSocketStatusListener;
 
 #[derive(Clone)]
 pub struct BitgetWebSocketClient {
@@ -19,10 +20,12 @@ pub struct BitgetWebSocketClient {
     pub store: Arc<DashMap<String, TickerData>>,
     connected: Arc<RwLock<bool>>,
     trade_repo: Arc<TradeRepository>,
+
+    pub symbol_map: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl BitgetWebSocketClient {
-    pub fn new(exchange: Exchange, trade_repo: Arc<TradeRepository>) -> Self {
+    pub fn new(exchange: Exchange, trade_repo: Arc<TradeRepository>, symbol_map: HashMap<String, String>) -> Self {
         Self {
             exchange: Arc::new(exchange),
             ws_url: "wss://ws.bitget.com/v2/ws/public".to_string(),
@@ -30,6 +33,7 @@ impl BitgetWebSocketClient {
             store: Arc::new(DashMap::new()),
             connected: Arc::new(RwLock::new(false)),
             trade_repo,
+            symbol_map: Arc::new(RwLock::new(symbol_map)),
         }
     }
 
@@ -58,6 +62,7 @@ impl BitgetWebSocketClient {
         let exchange = self.exchange.clone();
         let connected = self.connected.clone();
         let trade_repo = self.trade_repo.clone();
+        let symbol_map = self.symbol_map.clone();
 
         tokio::spawn(async move {
             while let Some(msg) = read.next().await {
@@ -75,12 +80,16 @@ impl BitgetWebSocketClient {
                                             inst_id: inst_id.to_string(),
                                             ts: ts.to_string(),
                                         };
-                                        store.insert(inst_id.to_string(), ticker);
+                                        let symbol_map_clone = symbol_map.clone();
+                                        let symbol_map_clone = symbol_map_clone.read().await;
+                                        let symbol_str = &String::from(inst_id);
+                                        let symbol_name = symbol_map_clone.get(symbol_str).unwrap_or_else(|| symbol_str);
+                                        store.insert(String::from(symbol_name), ticker);
                                         // 保存到 TradeRepository
                                         if let Ok(price) = last.parse::<f64>() {
                                             let trade = Trade {
                                                 exchange: exchange.name.clone(),
-                                                symbol: inst_id.to_string(),
+                                                symbol: String::from(symbol_name),
                                                 price,
                                                 timestamp: ts.parse().unwrap_or(0),
                                             };

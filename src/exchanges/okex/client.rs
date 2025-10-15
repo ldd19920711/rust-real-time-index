@@ -1,42 +1,38 @@
-use crate::core::model::{Exchange, TickerData};
-use crate::core::trade::trade_repository::{Trade, TradeRepository};
-use crate::core::ws::websocket_listener::WebSocketStatusListener;
-use crate::exchanges::bitget::client::BitgetWebSocketClient;
-use async_trait::async_trait;
-use dashmap::DashMap;
-use futures_util::{SinkExt, StreamExt};
-use serde_json::json;
-use std::io::Bytes;
 use std::{collections::HashSet, sync::Arc};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
+use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tracing::{error, info};
+use dashmap::DashMap;
+use tracing::{info, error};
+use serde_json::json;
 use tungstenite::Utf8Bytes;
+use async_trait::async_trait;
+use crate::core::model::{Exchange, TickerData};
+use crate::core::trade::trade_repository::{Trade, TradeRepository};
+use crate::core::ws::websocket_listener::WebSocketStatusListener;
 
 #[derive(Clone)]
-pub struct BinanceWebSocketClient {
+pub struct OkexWebSocketClient {
     pub exchange: Arc<Exchange>,
     pub ws_url: String,
     pub sub_symbol_set: Arc<RwLock<HashSet<String>>>,
     pub store: Arc<DashMap<String, TickerData>>,
     connected: Arc<RwLock<bool>>,
     trade_repo: Arc<TradeRepository>,
-    ticker_suffix: String,
 
     pub symbol_map: Arc<RwLock<HashMap<String, String>>>,
 }
 
-impl BinanceWebSocketClient {
+impl OkexWebSocketClient {
     pub fn new(exchange: Exchange, trade_repo: Arc<TradeRepository>, symbol_map: HashMap<String, String>) -> Self {
         Self {
             exchange: Arc::new(exchange),
-            ws_url: "wss://stream.binance.com:443/ws/btcusdt@miniTicker".to_string(),
+            ws_url: "wss://ws.okx.com:8443/ws/v5/public".to_string(),
             sub_symbol_set: Arc::new(RwLock::new(HashSet::new())),
             store: Arc::new(DashMap::new()),
             connected: Arc::new(RwLock::new(false)),
             trade_repo,
-            ticker_suffix: "@miniTicker".to_string(),
             symbol_map: Arc::new(RwLock::new(symbol_map)),
         }
     }
@@ -67,50 +63,45 @@ impl BinanceWebSocketClient {
         let connected = self.connected.clone();
         let trade_repo = self.trade_repo.clone();
         let symbol_map = self.symbol_map.clone();
-        // let ticker_suffix = self.ticker_suffix.clone();
 
         tokio::spawn(async move {
             while let Some(msg) = read.next().await {
                 match msg {
                     Ok(Message::Text(text)) => {
-                        if text.contains("MiniTicker") {
-                            // 解析行情
-                            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&text) {
-                                let symbol = json_val["s"].as_str().unwrap_or_default();
-                                let price = json_val["c"].as_str().unwrap_or_default();
-                                let ts = json_val["E"].as_i64().unwrap_or(0);
-
-                                let ticker = TickerData {
-                                    last_pr: price.to_string(),
-                                    inst_id: String::from(symbol),
-                                    ts: ts.to_string(),
-                                };
-                                let symbol_map_clone = symbol_map.clone();
-                                let symbol_map_clone = symbol_map_clone.read().await;
-                                let symbol_str = &String::from(symbol);
-                                let symbol_name = symbol_map_clone.get(symbol_str).unwrap_or_else(|| symbol_str);
-                                store.insert(String::from(symbol_name), ticker.clone());
-
-                                if let Ok(p) = price.parse::<f64>() {
-                                    let trade = Trade {
-                                        exchange: exchange.name.clone(),
-                                        symbol: String::from(symbol_name),
-                                        price: p,
-                                        timestamp: ts,
-                                    };
-                                    trade_repo.save_trade(trade);
+                        if !text.contains("tickers") { continue; }
+                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if let Some(data_array) = json_val["data"].as_array() {
+                                for d in data_array {
+                                    if let (Some(last), Some(inst_id), Some(ts)) =
+                                        (d["last"].as_str(), d["instId"].as_str(), d["ts"].as_str())
+                                    {
+                                        let ticker = TickerData {
+                                            last_pr: last.to_string(),
+                                            inst_id: inst_id.to_string(),
+                                            ts: ts.to_string(),
+                                        };
+                                        let symbol_map_clone = symbol_map.clone();
+                                        let symbol_map_clone = symbol_map_clone.read().await;
+                                        let symbol_str = &String::from(inst_id);
+                                        let symbol_name = symbol_map_clone.get(symbol_str).unwrap_or_else(|| symbol_str);
+                                        store.insert(String::from(symbol_name), ticker);
+                                        // 保存到 TradeRepository
+                                        if let Ok(price) = last.parse::<f64>() {
+                                            let trade = Trade {
+                                                exchange: exchange.name.clone(),
+                                                symbol: String::from(symbol_name),
+                                                price,
+                                                timestamp: ts.parse().unwrap_or(0),
+                                            };
+                                            trade_repo.save_trade(trade);
+                                        }
+                                    }
                                 }
                             }
-                        } else if text.contains("ping") {
-                            let pong_msg = text.replace("ping", "pong");
-                            let _ = write
-                                .send(Message::Text(Utf8Bytes::from(pong_msg.clone())))
-                                .await;
-                            info!("{} ping/pong: {}", exchange.name, pong_msg);
                         }
                     }
                     Ok(Message::Ping(_)) => {
-                        // let _ = write.send(Message::Pong(Bytes::)).await;
+                        // let _ = write.send(Message::Pong(vec![])).await;
                     }
                     Err(e) => {
                         error!("{} websocket error: {:?}", exchange.name, e);
@@ -128,10 +119,8 @@ impl BinanceWebSocketClient {
 }
 
 #[async_trait]
-impl WebSocketStatusListener for BinanceWebSocketClient {
-    fn exchange_name(&self) -> &str {
-        &self.exchange.name
-    }
+impl WebSocketStatusListener for OkexWebSocketClient {
+    fn exchange_name(&self) -> &str { &self.exchange.name }
 
     async fn connect(&self, symbols: Option<HashSet<String>>) {
         if let Err(e) = self.connect_internal(symbols).await {
@@ -142,21 +131,10 @@ impl WebSocketStatusListener for BinanceWebSocketClient {
     }
 
     fn build_sub_msg(&self, symbols: &HashSet<String>) -> Option<String> {
-        if symbols.is_empty() {
-            return None;
-        }
-        let args: Vec<_> = symbols
-            .iter()
-            .map(|s| format!("{}{}", s.to_lowercase(), self.ticker_suffix))
+        let args: Vec<_> = symbols.iter()
+            .map(|s| json!({"channel":"tickers","instId": s}))
             .collect();
-        Some(
-            json!({
-                "method": "SUBSCRIBE",
-                "params": args,
-                "id": chrono::Utc::now().timestamp_millis()
-            })
-            .to_string(),
-        )
+        Some(json!({"op":"subscribe","args":args}).to_string())
     }
 
     async fn subscription(&self) {

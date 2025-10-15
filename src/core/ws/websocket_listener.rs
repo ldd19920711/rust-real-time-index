@@ -1,8 +1,8 @@
 use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
 use dashmap::DashMap;
-use tokio::{sync::RwLock, time::{sleep, Duration}};
-use tracing::{info, error};
+use tokio::{time::{sleep, Duration}};
+use tracing::info;
 use crate::core::model::TickerData;
 
 /// WebSocket 抽象 trait，等价 Java WebSocketStatusListener
