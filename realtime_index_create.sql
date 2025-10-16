@@ -67,15 +67,21 @@ COMMENT ON COLUMN index_data_ethusdt.symbol IS '指数名称';
 COMMENT ON COLUMN index_data_ethusdt.last IS '最新指数值';
 COMMENT ON COLUMN index_data_ethusdt.formula IS '计算公式';
 
-CREATE TABLE index_kline_data (
-                                id BIGSERIAL PRIMARY KEY,
-                                symbol VARCHAR(45) NOT NULL,
-                                open DECIMAL(36,18) NOT NULL,
-                                high DECIMAL(36,18) NOT NULL,
-                                low DECIMAL(36,18) NOT NULL,
-                                close DECIMAL(36,18) NOT NULL,
-                                ts BIGINT NOT NULL, -- unix timestamp
-                                created_at TIMESTAMP DEFAULT now(),
-                                updated_at TIMESTAMP DEFAULT now(),
-                                UNIQUE(symbol, ts)
+create table index_kline_data
+(
+    id         bigint                                      not null,
+    symbol     varchar(45)                                 not null,
+    open       numeric(36, 18)                             not null,
+    high       numeric(36, 18)                             not null,
+    low        numeric(36, 18)                             not null,
+    close      numeric(36, 18)                             not null,
+    ts         bigint                                      not null,
+    created_at timestamp   default now(),
+    updated_at timestamp   default now(),
+    interval   varchar(10) default '1m'::character varying not null,
+    primary key (id, symbol, interval)
 );
+
+alter table index_kline_data
+    owner to postgres;
+

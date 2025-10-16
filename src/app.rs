@@ -1,4 +1,4 @@
-use crate::core::model::{IndexKlineData, Symbol};
+use crate::core::model::{IndexKlineData, KlineInterval, Symbol};
 use crate::core::index::index_calculator::IndexCalculator;
 use crate::exchanges::ExchangeEnum;
 use crate::tasks::{index_calculator_task, market_printer, price_updater};
@@ -99,6 +99,11 @@ impl App {
             index_configs.clone(),
             config_repo_arc,
             kline_tx,
+            vec![
+                KlineInterval::OneMinute,
+                KlineInterval::FiveMinutes,
+                KlineInterval::FifteenMinutes,
+            ]
         ));
 
         tokio::spawn(market_printer::run_market_printer(

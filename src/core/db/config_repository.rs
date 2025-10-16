@@ -156,21 +156,22 @@ impl ConfigRepository{
 }
 
 impl ConfigRepository {
-    pub async fn insert_index_kline_data(&self,
-                        index_data: &IndexKlineData,) -> anyhow::Result<()> {
+    pub async fn insert_index_kline_data(&self, index_data: &IndexKlineData) -> anyhow::Result<()> {
         let sql = r#"
-            INSERT INTO index_kline_data (id, symbol, open, high, low, close, ts, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (id) DO UPDATE
-              SET open = EXCLUDED.open,
-                  high = EXCLUDED.high,
-                  low = EXCLUDED.low,
-                  close = EXCLUDED.close,
-                  updated_at = EXCLUDED.updated_at
-            "#;
+    INSERT INTO index_kline_data (id, symbol, interval, open, high, low, close, ts, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    ON CONFLICT (id, symbol, interval) DO UPDATE
+      SET open = EXCLUDED.open,
+          high = EXCLUDED.high,
+          low = EXCLUDED.low,
+          close = EXCLUDED.close,
+          updated_at = EXCLUDED.updated_at
+"#;
+
         sqlx::query(&sql)
-            .bind(&index_data.id)
+            .bind(index_data.id)
             .bind(&index_data.symbol)
+            .bind(&index_data.interval.to_string())  // 绑定新字段
             .bind(&index_data.open)
             .bind(&index_data.high)
             .bind(&index_data.low)
@@ -180,6 +181,8 @@ impl ConfigRepository {
             .bind(index_data.updated_at)
             .execute(&self.pool)
             .await?;
+
         Ok(())
     }
+
 }

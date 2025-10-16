@@ -16,12 +16,12 @@ pub async fn run_market_printer(
             if let Some(client) = manager.get_client(exch) {
                 for symbol in symbols {
                     if let Some(ticker) = client.get_ticker(&symbol.symbol_name) {
-                        println!(
-                            "[Market] {} {} 最新价: {}",
-                            exch.name(),
-                            symbol.symbol_name,
-                            ticker.last_pr
-                        );
+                        // println!(
+                        //     "[Market] {} {} 最新价: {}",
+                        //     exch.name(),
+                        //     symbol.symbol_name,
+                        //     ticker.last_pr
+                        // );
                     }
                 }
             }

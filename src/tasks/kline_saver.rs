@@ -25,7 +25,9 @@ pub async fn start_kline_saver(
 
             tokio::spawn(async move {
                 while let Some(k) = sub_rx.recv().await {
-                    let table_name = format!("index_kline_{}", sym.to_lowercase());
+                    if !sym.eq(&k.symbol) {
+                        println!("symbol: {} {:?}", &sym, k);
+                    }
                     if let Err(e) = config_repo.insert_index_kline_data(&k).await {
                         eprintln!("Failed to insert kline for {}: {:?}", sym, e);
                     }
