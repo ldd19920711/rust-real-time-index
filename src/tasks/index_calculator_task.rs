@@ -29,8 +29,8 @@ pub async fn run_index_calculator(
 
         for config in &index_configs {
             // 获取 calculator
-            let mut calcs = calculators.calculators.write().await;
-            if let Some(calc) = calcs.get_mut(&config.name) {
+            let calcs = calculators.calculators.read().await;
+            if let Some(calc) = calcs.get(&config.name) {
                 if let Some(idx) = calc.calculate_index(
                     &config.name,
                     &config.formula,

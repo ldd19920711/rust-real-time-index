@@ -45,7 +45,7 @@ impl IndexCalculator {
         self.price_map.insert(key.to_string(), price);
     }
 
-    pub fn calculate_index(&mut self, name: &str, formula: &str, time: u64) -> Option<Index> {
+    pub fn calculate_index(&self, name: &str, formula: &str, time: u64) -> Option<Index> {
         if self.price_map.is_empty() {
             println!("Price map is empty");
             return None;
@@ -105,46 +105,46 @@ impl IndexCalculator {
             computed_formula,
         };
 
-        self.index_list.push(index.clone());
+        // self.index_list.push(index.clone());
 
         Some(index)
     }
 
 
-    pub fn calculate_edp(&mut self) -> Option<Decimal> {
-        if self.index_list.is_empty() {
-            return None;
-        }
-
-        // 当前时间 - 10分钟
-        let cutoff = Utc::now() - Duration::minutes(10);
-        let cutoff_ms = cutoff.timestamp_millis();
-
-        // 删除旧数据 + 累加最新价格
-        let mut sum = Decimal::ZERO;
-
-        // 过滤保留有效数据
-        self.index_list.retain(|idx| idx.id >= cutoff_ms as u64);
-
-        for idx in &self.index_list {
-            sum += idx.last;
-        }
-
-        // 如果全被清理掉了
-        if self.index_list.is_empty() {
-            return None;
-        }
-
-        // 求平均
-        let avg = sum / Decimal::from(self.index_list.len() as u64);
-
-        println!(
-            "Calculate EDP [{}] symbol [{}] size [{}]",
-            avg, self.index_name, self.index_list.len()
-        );
-
-        Some(avg.round_dp_with_strategy(8, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
-    }
+    // pub fn calculate_edp(&mut self) -> Option<Decimal> {
+    //     if self.index_list.is_empty() {
+    //         return None;
+    //     }
+    //
+    //     // 当前时间 - 10分钟
+    //     let cutoff = Utc::now() - Duration::minutes(10);
+    //     let cutoff_ms = cutoff.timestamp_millis();
+    //
+    //     // 删除旧数据 + 累加最新价格
+    //     let mut sum = Decimal::ZERO;
+    //
+    //     // 过滤保留有效数据
+    //     self.index_list.retain(|idx| idx.id >= cutoff_ms as u64);
+    //
+    //     for idx in &self.index_list {
+    //         sum += idx.last;
+    //     }
+    //
+    //     // 如果全被清理掉了
+    //     if self.index_list.is_empty() {
+    //         return None;
+    //     }
+    //
+    //     // 求平均
+    //     let avg = sum / Decimal::from(self.index_list.len() as u64);
+    //
+    //     println!(
+    //         "Calculate EDP [{}] symbol [{}] size [{}]",
+    //         avg, self.index_name, self.index_list.len()
+    //     );
+    //
+    //     Some(avg.round_dp_with_strategy(8, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+    // }
 
 
     fn check_exception(&self, price: Decimal) -> Decimal {
