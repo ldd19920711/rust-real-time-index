@@ -1,8 +1,13 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
+use std::sync::Arc;
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use tokio::sync::RwLock;
+use crate::core::trade::trade_repository::TradeRepository;
 
 #[derive(Clone)]
 pub struct Exchange {
@@ -125,8 +130,6 @@ pub enum KlineInterval {
     FiveMinutes,
     #[sqlx(rename = "15m")]
     FifteenMinutes,
-    #[sqlx(rename = "30m")]
-    ThirtyMinutes,
     #[sqlx(rename = "1h")]
     OneHour,
     #[sqlx(rename = "4h")]
@@ -141,7 +144,6 @@ impl Display for KlineInterval {
             KlineInterval::OneMinute => "1m".to_string(),
             KlineInterval::FiveMinutes => "5m".to_string(),
             KlineInterval::FifteenMinutes => "15m".to_string(),
-            KlineInterval::ThirtyMinutes => "30m".to_string(),
             KlineInterval::OneHour => "1h".to_string(),
             KlineInterval::FourHours => "4h".to_string(),
             KlineInterval::OneDay => "1d".to_string(),
@@ -157,10 +159,28 @@ impl KlineInterval {
             KlineInterval::OneMinute => 60,
             KlineInterval::FiveMinutes => 60 * 5,
             KlineInterval::FifteenMinutes => 60 * 15,
-            KlineInterval::ThirtyMinutes => 60 * 30,
             KlineInterval::OneHour => 60 * 60,
             KlineInterval::FourHours => 60 * 60 * 4,
             KlineInterval::OneDay => 60 * 60 * 24,
         }
     }
+}
+
+
+#[async_trait::async_trait]
+pub trait ExchangeWsHandler: Send + Sync {
+    /// 返回交易所名称
+    fn name(&self) -> &str;
+
+    /// 构建订阅消息（不同交易所格式不同）
+    fn build_sub_msg(&self, symbols: &HashSet<String>) -> Option<String>;
+
+    /// 解析行情消息（不同交易所格式不同）
+    async fn handle_message(
+        &self,
+        text: &str,
+        store: Arc<DashMap<String, TickerData>>,
+        trade_repo: Arc<TradeRepository>,
+        symbol_map: Arc<RwLock<HashMap<String, String>>>,
+    );
 }

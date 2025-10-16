@@ -1,6 +1,7 @@
 pub mod bitget;
 pub mod binance;
 pub mod okex;
+mod model;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ExchangeEnum {

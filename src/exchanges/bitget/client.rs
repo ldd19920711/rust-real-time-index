@@ -1,13 +1,14 @@
-use std::{collections::HashSet, sync::Arc};
-use std::collections::HashMap;
-use tokio::sync::RwLock;
-use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use dashmap::DashMap;
-use tracing::{info, error};
-use serde_json::json;
-use tungstenite::Utf8Bytes;
+use std::{collections::{HashSet, HashMap}, sync::Arc};
 use async_trait::async_trait;
+use dashmap::DashMap;
+use tokio::sync::{Mutex, RwLock};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
+use futures_util::{SinkExt, StreamExt};
+use futures_util::stream::SplitSink;
+use tracing::{info, error};
+use tungstenite::Utf8Bytes;
+use serde_json::json;
+use tokio::net::TcpStream;
 use crate::core::model::{Exchange, TickerData};
 use crate::core::trade::trade_repository::{Trade, TradeRepository};
 use crate::core::ws::websocket_listener::WebSocketStatusListener;
@@ -20,12 +21,13 @@ pub struct BitgetWebSocketClient {
     pub store: Arc<DashMap<String, TickerData>>,
     connected: Arc<RwLock<bool>>,
     trade_repo: Arc<TradeRepository>,
-
     pub symbol_map: Arc<RwLock<HashMap<String, String>>>,
+    pub ping_msg : String,
+    pub ping_interval : u64,
 }
 
 impl BitgetWebSocketClient {
-    pub fn new(exchange: Exchange, trade_repo: Arc<TradeRepository>, symbol_map: HashMap<String, String>) -> Self {
+    pub fn new(exchange: Exchange, trade_repo: Arc<TradeRepository>, symbol_map: HashMap<String, String>, ping_msg: String, ping_interval: u64) -> Self {
         Self {
             exchange: Arc::new(exchange),
             ws_url: "wss://ws.bitget.com/v2/ws/public".to_string(),
@@ -34,125 +36,91 @@ impl BitgetWebSocketClient {
             connected: Arc::new(RwLock::new(false)),
             trade_repo,
             symbol_map: Arc::new(RwLock::new(symbol_map)),
+            ping_msg,
+            ping_interval,
         }
-    }
-
-    async fn connect_internal(&self, symbols: Option<HashSet<String>>) -> anyhow::Result<()> {
-        if let Some(s) = symbols {
-            let mut set = self.sub_symbol_set.write().await;
-            set.extend(s);
-        }
-
-        info!("{} connecting to {}", self.exchange.name, self.ws_url);
-        let (ws_stream, _) = connect_async(&self.ws_url).await?;
-        let (mut write, mut read) = ws_stream.split();
-
-        {
-            let mut conn = self.connected.write().await;
-            *conn = true;
-        }
-
-        // 构建订阅消息
-        let subs = self.sub_symbol_set.read().await;
-        if let Some(msg) = self.build_sub_msg(&subs) {
-            write.send(Message::Text(Utf8Bytes::from(msg))).await?;
-        }
-
-        let store = self.store.clone();
-        let exchange = self.exchange.clone();
-        let connected = self.connected.clone();
-        let trade_repo = self.trade_repo.clone();
-        let symbol_map = self.symbol_map.clone();
-
-        tokio::spawn(async move {
-            while let Some(msg) = read.next().await {
-                match msg {
-                    Ok(Message::Text(text)) => {
-                        if !text.contains("ticker") { continue; }
-                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&text) {
-                            if let Some(data_array) = json_val["data"].as_array() {
-                                for d in data_array {
-                                    if let (Some(last), Some(inst_id), Some(ts)) =
-                                        (d["lastPr"].as_str(), d["instId"].as_str(), d["ts"].as_str())
-                                    {
-                                        let ticker = TickerData {
-                                            last_pr: last.to_string(),
-                                            inst_id: inst_id.to_string(),
-                                            ts: ts.to_string(),
-                                        };
-                                        let symbol_map_clone = symbol_map.clone();
-                                        let symbol_map_clone = symbol_map_clone.read().await;
-                                        let symbol_str = &String::from(inst_id);
-                                        let symbol_name = symbol_map_clone.get(symbol_str).unwrap_or_else(|| symbol_str);
-                                        store.insert(String::from(symbol_name), ticker);
-                                        // 保存到 TradeRepository
-                                        if let Ok(price) = last.parse::<f64>() {
-                                            let trade = Trade {
-                                                exchange: exchange.name.clone(),
-                                                symbol: String::from(symbol_name),
-                                                price,
-                                                timestamp: ts.parse().unwrap_or(0),
-                                            };
-                                            trade_repo.save_trade(trade);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Ok(Message::Ping(_)) => {
-                        // let _ = write.send(Message::Pong(vec![])).await;
-                    }
-                    Err(e) => {
-                        error!("{} websocket error: {:?}", exchange.name, e);
-                        let mut conn = connected.write().await;
-                        *conn = false;
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-        });
-
-        Ok(())
     }
 }
 
 #[async_trait]
 impl WebSocketStatusListener for BitgetWebSocketClient {
-    fn exchange_name(&self) -> &str { &self.exchange.name }
+    fn exchange_name(&self) -> &str {
+        &self.exchange.name
+    }
 
-    async fn connect(&self, symbols: Option<HashSet<String>>) {
-        if let Err(e) = self.connect_internal(symbols).await {
-            error!("{} connect error: {:?}", self.exchange.name, e);
-            let mut conn = self.connected.write().await;
-            *conn = false;
-        }
+    fn ping_msg(&self) -> &str {
+        &self.ping_msg
+    }
+
+    fn ping_interval(&self) -> u64 {
+        self.ping_interval
+    }
+
+    fn ws_url(&self) -> &str {
+        &self.ws_url
     }
 
     fn build_sub_msg(&self, symbols: &HashSet<String>) -> Option<String> {
+        if symbols.is_empty() { return None; }
         let args: Vec<_> = symbols.iter()
             .map(|s| json!({"instType":"SPOT","channel":"ticker","instId": s}))
             .collect();
-        Some(json!({"op":"subscribe","args":args}).to_string())
+        Some(json!({"op":"subscribe","args": args}).to_string())
     }
 
-    async fn subscription(&self) {
-        let subs = self.sub_symbol_set.read().await;
-        if let Some(msg) = self.build_sub_msg(&subs) {
-            info!("{} subscription msg: {}", self.exchange.name, msg);
+    async fn handle_message(&self, text: &str, write: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>) {
+        if !text.contains("ticker") { return; }
+
+        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(text) {
+            if let Some(data_array) = json_val["data"].as_array() {
+                for d in data_array {
+                    if let (Some(last), Some(inst_id), Some(ts)) =
+                        (d["lastPr"].as_str(), d["instId"].as_str(), d["ts"].as_str())
+                    {
+                        let ticker = TickerData {
+                            last_pr: last.to_string(),
+                            inst_id: inst_id.to_string(),
+                            ts: ts.to_string(),
+                        };
+
+                        let symbol_map_lock = self.symbol_map();
+                        let symbol_map = symbol_map_lock.read().await;
+                        let symbol_name = symbol_map.get(inst_id).unwrap_or(&inst_id.to_string()).to_string();
+
+                        self.store().insert(symbol_name.clone(), ticker.clone());
+
+                        if let Ok(price) = last.parse::<f64>() {
+                            let trade = Trade {
+                                exchange: self.exchange_name().to_string(),
+                                symbol: symbol_name,
+                                price,
+                                timestamp: ts.parse().unwrap_or(0),
+                            };
+                            self.trade_repo().save_trade(trade);
+                        }
+                    }
+                }
+            }
         }
     }
 
-    async fn send_ping(&self, ping_msg: &str) {
-        info!("{} send ping: {}", self.exchange.name, ping_msg);
+    fn connected(&self) -> Arc<RwLock<bool>> {
+        Arc::clone(&self.connected)
     }
 
-    fn is_connected(&self) -> bool {
-        futures::executor::block_on(async { *self.connected.read().await })
+    fn sub_symbol_set(&self) -> Arc<RwLock<HashSet<String>>> {
+        Arc::clone(&self.sub_symbol_set)
     }
 
-    fn get_ticker(&self, symbol: &str) -> Option<TickerData> {
-        self.store.get(symbol).map(|v| v.clone())
+    fn store(&self) -> Arc<DashMap<String, TickerData>> {
+        Arc::clone(&self.store)
+    }
+
+    fn trade_repo(&self) -> Arc<TradeRepository> {
+        Arc::clone(&self.trade_repo)
+    }
+
+    fn symbol_map(&self) -> Arc<RwLock<HashMap<String, String>>> {
+        Arc::clone(&self.symbol_map)
     }
 }

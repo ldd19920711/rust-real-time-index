@@ -1,6 +1,6 @@
 use rust_decimal::prelude::*;
 use std::collections::HashMap;
-use chrono::{Duration, Utc};
+use tracing::warn;
 
 /// 指数配置
 #[derive(Debug, Clone)]
@@ -47,7 +47,7 @@ impl IndexCalculator {
 
     pub fn calculate_index(&self, name: &str, formula: &str, time: u64) -> Option<Index> {
         if self.price_map.is_empty() {
-            println!("Price map is empty");
+            warn!("name {} Price map is empty", name);
             return None;
         }
 
@@ -70,7 +70,7 @@ impl IndexCalculator {
                 valid_count += 1;
                 computed_parts.push(price.to_string());
             } else {
-                println!("Price not found for {}", t);
+                warn!("Price not found for {}", t);
             }
         }
 
@@ -110,7 +110,6 @@ impl IndexCalculator {
         Some(index)
     }
 
-
     // pub fn calculate_edp(&mut self) -> Option<Decimal> {
     //     if self.index_list.is_empty() {
     //         return None;
@@ -138,7 +137,7 @@ impl IndexCalculator {
     //     // 求平均
     //     let avg = sum / Decimal::from(self.index_list.len() as u64);
     //
-    //     println!(
+    //     info!(
     //         "Calculate EDP [{}] symbol [{}] size [{}]",
     //         avg, self.index_name, self.index_list.len()
     //     );

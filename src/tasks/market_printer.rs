@@ -3,6 +3,7 @@ use crate::exchanges::ExchangeEnum;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
+use tracing::info;
 use crate::core::exchange::exchange_manager::ExchangeManager;
 
 pub async fn run_market_printer(
@@ -16,12 +17,12 @@ pub async fn run_market_printer(
             if let Some(client) = manager.get_client(exch) {
                 for symbol in symbols {
                     if let Some(ticker) = client.get_ticker(&symbol.symbol_name) {
-                        // println!(
-                        //     "[Market] {} {} 最新价: {}",
-                        //     exch.name(),
-                        //     symbol.symbol_name,
-                        //     ticker.last_pr
-                        // );
+                        info!(
+                            "[Market] {} {} 最新价: {}",
+                            exch.name(),
+                            symbol.symbol_name,
+                            ticker.last_pr
+                        );
                     }
                 }
             }

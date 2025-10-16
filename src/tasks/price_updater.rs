@@ -3,7 +3,6 @@ use crate::core::model::Symbol;
 use crate::exchanges::ExchangeEnum;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use rust_decimal::Decimal;
 use crate::core::exchange::exchange_manager::ExchangeManager;
 

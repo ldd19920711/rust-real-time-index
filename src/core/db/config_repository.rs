@@ -184,5 +184,42 @@ impl ConfigRepository {
 
         Ok(())
     }
-
 }
+
+impl ConfigRepository {
+    pub async fn create_index_data_table_if_not_exists(&self, config_name: &str) -> anyhow::Result<()> {
+        let table_name = format!("index_data_{}", config_name.to_lowercase());
+
+        // 1️⃣ 创建表
+        let sql_create = format!(r#"
+            CREATE TABLE IF NOT EXISTS {} (
+                id BIGSERIAL PRIMARY KEY,
+                symbol VARCHAR(45) NOT NULL,
+                last NUMERIC(36, 18) NOT NULL,
+                formula VARCHAR(512) NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                updated_at TIMESTAMPTZ DEFAULT now()
+            )
+        "#, table_name);
+        sqlx::query(&sql_create).execute(&self.pool).await?;
+
+        // 2️⃣ 添加列注释
+        let comments = vec![
+            ("id", "自增主键"),
+            ("symbol", "指数名称"),
+            ("last", "最新指数值"),
+            ("formula", "计算公式"),
+        ];
+        for (col, comment) in comments {
+            let sql_comment = format!("COMMENT ON COLUMN {}.{} IS '{}'", table_name, col, comment);
+            sqlx::query(&sql_comment).execute(&self.pool).await?;
+        }
+
+        // 3️⃣ 设置表 owner
+        let sql_owner = format!("ALTER TABLE {} OWNER TO postgres", table_name);
+        sqlx::query(&sql_owner).execute(&self.pool).await?;
+
+        Ok(())
+    }
+}
+
